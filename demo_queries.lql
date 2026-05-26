@@ -1,53 +1,27 @@
 -- demo_queries.lql
--- Replication of Chris Hay's YouTube demo:
--- "I Decoupled Attention from Weights - Gemma 4 26B"
+-- Replication of Chris Hay's YouTube demo using confirmed LQL syntax.
 -- Run with: python lql_repl.py --script demo_queries.lql
 --
--- Each query probes the Gemma 3 4B FFN graph (vindex) directly.
--- No text generation. No GPU. Pure KNN walks over the weight graph.
+-- Each statement is executed via: larql lql '<stmt>' --graph <vindex>
+-- These are graph fact lookups over the compiled FFN knowledge graph.
 
--- ── 1. Model metadata ────────────────────────────────────────────────────────
--- Confirm vindex loaded correctly and inspect layer count / architecture.
-SHOW LAYERS;
+-- 1. Who is the president of France?
+SELECT ?x WHERE { <France> <president> ?x };
 
--- ── 2. Basic feature activation walk ────────────────────────────────────────
--- Ask: which features in the FFN fire most strongly when processing this prompt?
--- TOP 10 returns the 10 highest gate-score features across all layers.
-WALK "The capital of France is" TOP 10;
+-- 2. What is the capital of France?
+SELECT ?x WHERE { <France> <capital> ?x };
 
--- ── 3. Layer-scoped walk ─────────────────────────────────────────────────────
--- Same prompt but constrained to the mid-network layers (20-23).
--- This is where factual associations are densest in Gemma architecture.
-WALK "The capital of France is" TOP 10 LAYERS 20 TO 23;
+-- 3. What is the capital of Germany?
+SELECT ?x WHERE { <Germany> <capital> ?x };
 
--- ── 4. Concept comparison (the core demo) ───────────────────────────────────
--- Compare three prompts at the same layer to see:
---   - which features are shared (language structure)
---   - which are concept-specific (country identity)
--- This is the key mechanistic interpretability insight in Chris's video.
-PROBE "France is" vs "Germany is" vs "Japan is" AT LAYER 22;
+-- 4. What is the capital of Japan?
+SELECT ?x WHERE { <Japan> <capital> ?x };
 
--- ── 5. Next-token prediction from the graph ──────────────────────────────────
--- The model's prediction is derived from the graph walk, not from
--- autoregressive generation. This is much faster than normal inference.
-INFER "The capital of France is" TOP 5;
-INFER "The capital of Germany is" TOP 5;
-INFER "Mount Everest is located in" TOP 5;
+-- 5. What language does France speak?
+SELECT ?x WHERE { <France> <language> ?x };
 
--- ── 6. Feature inventory at a specific layer ─────────────────────────────────
--- What are the strongest features at layer 22 in general?
-SHOW FEATURES AT LAYER 22 TOP 20;
+-- 6. Open-ended: all facts about France
+SELECT ?r ?x WHERE { <France> ?r ?x };
 
--- ── 7. Knowledge edit (the advanced demo) ───────────────────────────────────
--- Insert a fact directly into the vindex graph.
--- This is NOT a fine-tune. It writes directly to the FFN edge structure.
--- After this, INFER queries should reflect the edit.
-INSERT INTO EDGES (entity, relation, target)
-VALUES ("Atlantis", "capital-of", "Poseidon");
-
--- Verify the edit propagated
-INFER "The capital of Atlantis is" TOP 5;
-
--- ── 8. Probe the edited concept ──────────────────────────────────────────────
--- Compare Atlantis against real capitals to see how it sits in the graph.
-PROBE "Atlantis is" vs "France is" vs "Germany is" AT LAYER 22;
+-- 7. All facts about Gemma (model self-knowledge)
+SELECT ?r ?x WHERE { <Gemma> ?r ?x };

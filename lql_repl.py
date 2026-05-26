@@ -1,90 +1,57 @@
 """lql_repl.py
-Interactive LQL REPL and script runner for the LARQL query engine.
+Interactive LQL REPL and script runner.
 
 Usage:
-    python lql_repl.py                        # interactive mode
-    python lql_repl.py --script demo_queries.lql  # run a .lql script file
-    python lql_repl.py --vindex ./data/my.vindex  # override vindex path
+    python lql_repl.py                            # interactive LQL REPL
+    python lql_repl.py --script demo_queries.lql  # run a .lql script
+    python lql_repl.py --vindex ./data/my.vindex   # override vindex path
 
-The LARQL CLI is launched as a persistent subprocess. Queries are sent
-line-by-line via stdin and responses read from stdout. Multi-line queries
-(ending with ;) are buffered and sent as a single block.
+Interactive mode wraps: larql repl <vindex>
+Script mode runs each statement via: larql lql '<stmt>' --graph <vindex>
 
-LQL Quick Reference:
-    WALK "<prompt>" TOP <k>;                          -- feature activation walk
-    WALK "<prompt>" TOP <k> LAYERS <start> TO <end>;  -- layer-scoped walk
-    PROBE "<a>" vs "<b>" vs "<c>" AT LAYER <n>;       -- concept comparison
-    INFER "<prompt>" TOP <k>;                         -- next-token prediction
-    INSERT INTO EDGES (entity, relation, target)      -- knowledge edit
-        VALUES ("<e>", "<r>", "<t>");
-    SHOW LAYERS;                                      -- model metadata
-    SHOW FEATURES AT LAYER <n> TOP <k>;               -- feature inventory
+LQL Quick Reference (confirmed syntax):
+    SELECT ?x WHERE { <subject> <relation> ?x }   -- graph fact lookup
+    larql lql 'SELECT ...' --graph <vindex>        -- one-shot CLI form
+    larql repl <vindex>                            -- interactive REPL
+    larql shannon slot-probe <vindex> --prompt ... -- next-token probing
+    larql dev walk --index <vindex> --prompt ...   -- FFN walk
 """
 import argparse
 import subprocess
 import sys
-import threading
 from pathlib import Path
 
 LARQL_BINARY = "./larql/target/release/larql"
 DEFAULT_VINDEX = "./data/gemma3-4b.vindex"
-PROMPT = "lql> "
 
 
-def launch_engine(vindex_path: str) -> subprocess.Popen:
-    """Start the larql query subprocess."""
+def check_prerequisites(vindex_path: str) -> tuple[Path, Path]:
     binary = Path(LARQL_BINARY)
     if not binary.exists():
         print(f"ERROR: LARQL binary not found at {LARQL_BINARY}")
         print("Run: bash setup_env.sh")
         sys.exit(1)
-
     vindex = Path(vindex_path)
     if not vindex.exists():
         print(f"ERROR: vindex not found at {vindex_path}")
         print("Run: bash fetch_vindex.sh")
         sys.exit(1)
-
-    cmd = [str(binary), "query", str(vindex)]
-    print(f"[lql_repl] Launching: {' '.join(cmd)}")
-
-    proc = subprocess.Popen(
-        cmd,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        bufsize=1,
-    )
-
-    # Stream stderr to terminal so startup messages / errors are visible
-    def _drain_stderr():
-        for line in proc.stderr:
-            print(f"[larql] {line}", end="", flush=True)
-
-    threading.Thread(target=_drain_stderr, daemon=True).start()
-    return proc
+    return binary, vindex
 
 
-def send_query(proc: subprocess.Popen, query: str) -> str:
-    """Send one LQL query (must end with ;) and collect the response."""
-    proc.stdin.write(query.strip() + "\n")
-    proc.stdin.flush()
-
-    lines = []
-    # Read until we hit the next prompt marker or an empty line after output
-    # Adjust the sentinel below if the larql CLI uses a different prompt string
-    for line in proc.stdout:
-        if line.strip() in ("", "lql>", ">", "larql>"):
-            break
-        lines.append(line)
-    return "".join(lines)
+def run_interactive(binary: Path, vindex: Path) -> None:
+    """Launch larql repl <vindex> directly — takes over the terminal."""
+    cmd = [str(binary), "repl", str(vindex)]
+    print(f"[lql_repl] Launching interactive REPL: {' '.join(cmd)}")
+    print("[lql_repl] Type LQL statements at the prompt. Ctrl-C or 'exit' to quit.\n")
+    subprocess.run(cmd)  # hands terminal control to the child process
 
 
-def run_script(proc: subprocess.Popen, script_path: str) -> None:
-    """Read a .lql file and execute each ; -terminated statement."""
+def run_script(binary: Path, vindex: Path, script_path: str) -> None:
+    """Execute each ; -terminated statement via: larql lql '<stmt>' --graph <vindex>"""
     text = Path(script_path).read_text(encoding="utf-8")
-    # Strip comments and split on semicolons
+
+    # Parse statements: strip comments, split on ;
     statements = []
     buf = []
     for line in text.splitlines():
@@ -93,68 +60,35 @@ def run_script(proc: subprocess.Popen, script_path: str) -> None:
             continue
         buf.append(stripped)
         if stripped.endswith(";"):
-            statements.append(" ".join(buf))
+            stmt = " ".join(buf).rstrip(";")
+            statements.append(stmt)
             buf = []
 
-    print(f"[lql_repl] Running {len(statements)} queries from {script_path}\n")
+    print(f"[lql_repl] Running {len(statements)} statements from {script_path}\n")
+
     for i, stmt in enumerate(statements, 1):
-        print(f"--- Query {i}/{len(statements)} ---")
-        print(f"{PROMPT}{stmt}")
-        result = send_query(proc, stmt)
-        print(result)
+        print(f"{'='*60}")
+        print(f"[{i}/{len(statements)}] {stmt}")
+        print(f"{'='*60}")
+        cmd = [str(binary), "lql", stmt, "--graph", str(vindex)]
+        result = subprocess.run(cmd, capture_output=False)  # output streams live to terminal
+        if result.returncode != 0:
+            print(f"[lql_repl] WARNING: statement exited {result.returncode}")
         print()
 
 
-def run_interactive(proc: subprocess.Popen) -> None:
-    """REPL loop: buffer input until ; then send."""
-    print("LARQL LQL Interactive Shell")
-    print("Type LQL queries ending with ; to execute. Ctrl-C or 'exit;' to quit.")
-    print("Example: WALK \"The capital of France is\" TOP 10;\n")
-
-    buf = []
-    try:
-        while True:
-            leader = PROMPT if not buf else "...   "
-            try:
-                line = input(leader)
-            except EOFError:
-                break
-
-            stripped = line.strip()
-            if stripped.lower() in ("exit;", "quit;", "exit", "quit"):
-                break
-            if stripped.startswith("--") or not stripped:
-                continue
-
-            buf.append(stripped)
-
-            if stripped.endswith(";"):
-                query = " ".join(buf)
-                buf = []
-                result = send_query(proc, query)
-                print(result)
-
-    except KeyboardInterrupt:
-        print("\nExiting.")
-    finally:
-        proc.terminate()
-        proc.wait(timeout=5)
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="LQL REPL for LARQL")
+    parser = argparse.ArgumentParser(description="LQL REPL / script runner for LARQL")
     parser.add_argument("--vindex", default=DEFAULT_VINDEX, help="Path to .vindex directory")
-    parser.add_argument("--script", default=None, help="Path to a .lql script file to run non-interactively")
+    parser.add_argument("--script", default=None, help=".lql script file to run non-interactively")
     args = parser.parse_args()
 
-    proc = launch_engine(args.vindex)
+    binary, vindex = check_prerequisites(args.vindex)
 
     if args.script:
-        run_script(proc, args.script)
-        proc.terminate()
-        proc.wait(timeout=5)
+        run_script(binary, vindex, args.script)
     else:
-        run_interactive(proc)
+        run_interactive(binary, vindex)
 
 
 if __name__ == "__main__":
