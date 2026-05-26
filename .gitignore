@@ -1,20 +1,14 @@
 # Python
 __pycache__/
 *.pyc
-*.pyo
 .venv/
 venv/
-*.egg-info/
 
-# LARQL build artifacts
+# LARQL build artifacts (large, reproducible via setup_env.sh)
 larql/target/
 
-# Vindex (large binary data — do not commit)
+# Vindex (large binary — download via fetch_vindex.sh)
 data/gemma3-4b.vindex/
 
 # Logs
 *.log
-
-# Output results
-output/*.json
-output/*.error.json

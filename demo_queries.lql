@@ -1,0 +1,53 @@
+-- demo_queries.lql
+-- Replication of Chris Hay's YouTube demo:
+-- "I Decoupled Attention from Weights - Gemma 4 26B"
+-- Run with: python lql_repl.py --script demo_queries.lql
+--
+-- Each query probes the Gemma 3 4B FFN graph (vindex) directly.
+-- No text generation. No GPU. Pure KNN walks over the weight graph.
+
+-- ── 1. Model metadata ────────────────────────────────────────────────────────
+-- Confirm vindex loaded correctly and inspect layer count / architecture.
+SHOW LAYERS;
+
+-- ── 2. Basic feature activation walk ────────────────────────────────────────
+-- Ask: which features in the FFN fire most strongly when processing this prompt?
+-- TOP 10 returns the 10 highest gate-score features across all layers.
+WALK "The capital of France is" TOP 10;
+
+-- ── 3. Layer-scoped walk ─────────────────────────────────────────────────────
+-- Same prompt but constrained to the mid-network layers (20-23).
+-- This is where factual associations are densest in Gemma architecture.
+WALK "The capital of France is" TOP 10 LAYERS 20 TO 23;
+
+-- ── 4. Concept comparison (the core demo) ───────────────────────────────────
+-- Compare three prompts at the same layer to see:
+--   - which features are shared (language structure)
+--   - which are concept-specific (country identity)
+-- This is the key mechanistic interpretability insight in Chris's video.
+PROBE "France is" vs "Germany is" vs "Japan is" AT LAYER 22;
+
+-- ── 5. Next-token prediction from the graph ──────────────────────────────────
+-- The model's prediction is derived from the graph walk, not from
+-- autoregressive generation. This is much faster than normal inference.
+INFER "The capital of France is" TOP 5;
+INFER "The capital of Germany is" TOP 5;
+INFER "Mount Everest is located in" TOP 5;
+
+-- ── 6. Feature inventory at a specific layer ─────────────────────────────────
+-- What are the strongest features at layer 22 in general?
+SHOW FEATURES AT LAYER 22 TOP 20;
+
+-- ── 7. Knowledge edit (the advanced demo) ───────────────────────────────────
+-- Insert a fact directly into the vindex graph.
+-- This is NOT a fine-tune. It writes directly to the FFN edge structure.
+-- After this, INFER queries should reflect the edit.
+INSERT INTO EDGES (entity, relation, target)
+VALUES ("Atlantis", "capital-of", "Poseidon");
+
+-- Verify the edit propagated
+INFER "The capital of Atlantis is" TOP 5;
+
+-- ── 8. Probe the edited concept ──────────────────────────────────────────────
+-- Compare Atlantis against real capitals to see how it sits in the graph.
+PROBE "Atlantis is" vs "France is" vs "Germany is" AT LAYER 22;
