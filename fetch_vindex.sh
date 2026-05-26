@@ -9,18 +9,16 @@ log() { echo "[fetch] $*"; }
 
 VINDEX_DIR="./data/gemma3-4b.vindex"
 
-# ── HuggingFace CLI ──────────────────────────────────────────────────────────
-if ! command -v huggingface-cli &>/dev/null; then
-    log "Installing huggingface_hub CLI..."
-    pip install -q -U "huggingface_hub[cli]"
+# ── HuggingFace CLI (new: hf, old: huggingface-cli) ─────────────────────────
+if ! command -v hf &>/dev/null; then
+    log "Installing huggingface_hub..."
+    pip install -q -U "huggingface_hub"
 fi
 
 # ── Auth check ───────────────────────────────────────────────────────────────
-# If the repo is gated you need to run: huggingface-cli login
-# before executing this script. Check: huggingface-cli whoami
-if ! huggingface-cli whoami &>/dev/null; then
+if ! hf auth whoami &>/dev/null; then
     echo "WARNING: not logged in to HuggingFace."
-    echo "If the repo is gated, run: huggingface-cli login"
+    echo "Run: hf auth login"
 fi
 
 # ── Download ─────────────────────────────────────────────────────────────────
@@ -30,7 +28,7 @@ if [ -d "${VINDEX_DIR}" ] && find "${VINDEX_DIR}" -name '*.bin' -quit 2>/dev/nul
     log "Vindex already present at ${VINDEX_DIR} — skipping download."
 else
     log "Downloading chrishayuk/gemma-3-4b-it-vindex (~4-5 GB)..."
-    huggingface-cli download chrishayuk/gemma-3-4b-it-vindex \
+    hf download chrishayuk/gemma-3-4b-it-vindex \
         --local-dir "${VINDEX_DIR}"
 fi
 
